@@ -1,11 +1,25 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // main.bicep — MarbleCraft OMS  •  Distributor Order & Stock Allocation
 //
-// Deployment command (dev):
-//   az deployment group create \
+// Deployed via Azure Developer CLI (azd) + Azure Deployment Stacks.
+// azd invokes 'az stack group create' (post-provision hook) which wraps
+// ALL 10 resources in a single managed stack with:
+//   --action-on-unmanage deleteAll   → teardown deletes every resource cleanly
+//   --deny-settings-mode denyDelete  → portal deletion blocked for all members
+//
+// One-command deploy (driven entirely by azd):
+//   azd up --environment dev
+//   azd up --environment prod
+//
+// Manual stack deploy (bypassing azd, for emergencies):
+//   az stack group create \
+//     --name marblecraft-dev-stack \
 //     --resource-group marblecraft-dev-rg \
 //     --template-file main.bicep \
-//     --parameters dev.parameters.json
+//     --parameters dev.parameters.json \
+//     --action-on-unmanage deleteAll \
+//     --deny-settings-mode denyDelete \
+//     --yes
 //
 // The sqlAdminPassword parameter MUST arrive via a Key Vault reference in the
 // parameters file — see dev.parameters.json for the reference format.
@@ -43,6 +57,15 @@ param keyVaultName string
 @description('Container image to run in the API Container App')
 param containerImage string = 'mcr.microsoft.com/dotnet/samples:aspnetapp'
 
+@description('Resource ID of an existing Container App Environment to reuse. Empty = create new.')
+param existingContainerAppEnvId string = ''
+
+@description('Name of the Azure Container Registry used by azd to push and pull images')
+param acrName string
+
+@description('Resource group that contains the shared ACR')
+param acrResourceGroup string
+
 // ─── Variables ────────────────────────────────────────────────────────────────
 
 var prefix = 'marblecraft-${environment}'
@@ -67,6 +90,18 @@ resource existingKeyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
   name: keyVaultName
 }
 
+
+// ─── Module: Virtual Network + Private DNS ───────────────────────────────────
+
+module network './modules/network.bicep' = {
+  name: '${prefix}-network-deploy'
+  params: {
+    location: location
+    environment: environment
+    vnetName: '${prefix}-vnet'
+  }
+}
+
 // ─── Module: SQL Server + Database ────────────────────────────────────────────
 
 module sql './modules/sql.bicep' = {
@@ -81,6 +116,8 @@ module sql './modules/sql.bicep' = {
     sqlSkuName: sqlSkuMap[sqlSku].skuName
     sqlSkuTier: sqlSkuMap[sqlSku].skuTier
     sqlMaxSizeBytes: sqlSkuMap[sqlSku].maxSizeBytes
+    privateEndpointSubnetId: network.outputs.privateEndpointSubnetId
+    privateDnsZoneId: network.outputs.sqlPrivateDnsZoneId
   }
 }
 
@@ -92,7 +129,7 @@ module servicebus './modules/servicebus.bicep' = {
   params: {
     location: location
     environment: environment
-    namespaceName: '${prefix}-sb'
+    namespaceName: '${prefix}-sbus'
     skuName: 'Standard'
   }
 }
@@ -113,6 +150,8 @@ module api './modules/api.bicep' = {
     maxReplicas: environment == 'dev' ? 2 : 5
     keyVaultName: keyVaultName
     sqlConnectionStringSecretName: 'sql-connection-string'
+    existingContainerAppEnvId: existingContainerAppEnvId
+    acrLoginServer: '${acrName}.azurecr.io'
   }
 }
 
@@ -133,6 +172,18 @@ resource kvSecretsUserRoleAssignment 'Microsoft.Authorization/roleAssignments@20
   }
 }
 
+// ─── Grant Container App identity AcrPull role (cross-RG module) ─────────────
+
+module acrRbac './modules/acr-rbac.bicep' = {
+  name: '${prefix}-acr-rbac-deploy'
+  scope: resourceGroup(acrResourceGroup)
+  params: {
+    acrName: acrName
+    principalId: api.outputs.principalId
+    deploymentPrefix: prefix
+  }
+}
+
 // ─── Outputs ──────────────────────────────────────────────────────────────────
 
 @description('SQL Server FQDN')
@@ -146,3 +197,9 @@ output containerAppFqdn string = api.outputs.containerAppFqdn
 
 @description('Container App system-assigned identity principal ID')
 output containerAppPrincipalId string = api.outputs.principalId
+
+@description('Virtual Network resource ID')
+output vnetId string = network.outputs.vnetId
+
+@description('Private endpoint subnet resource ID')
+output privateEndpointSubnetId string = network.outputs.privateEndpointSubnetId

@@ -245,3 +245,8 @@ All resources follow the naming pattern `marblecraft-{env}-{resource}`.
 | `minReplicas` | Minimum Container App replicas (`0` dev, `1` prod) |
 | `keyVaultName` | Name of the pre-existing Key Vault |
 | `containerImage` | Container image to deploy (default: dotnet sample app) |
+
+
+
+
+
