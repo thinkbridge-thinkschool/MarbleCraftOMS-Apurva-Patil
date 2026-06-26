@@ -1,4 +1,5 @@
 using MarbleCraftOMS.Core.Entities;
+using MarbleCraftOMS.Core.Exceptions;
 using MarbleCraftOMS.Core.Interfaces;
 
 namespace MarbleCraftOMS.Application.Catalogue;
@@ -18,7 +19,7 @@ public class ProductService(
     {
         var supplier = await supplierRepo.GetByIdAsync(cmd.SupplierId);
         if (supplier is null)
-            throw new ArgumentException($"Supplier {cmd.SupplierId} not found.", nameof(cmd.SupplierId));
+            throw new UnprocessableEntityException($"Supplier {cmd.SupplierId} not found.");
 
         var product = new Product
         {
@@ -43,7 +44,7 @@ public class ProductService(
 
         var supplier = await supplierRepo.GetByIdAsync(cmd.SupplierId);
         if (supplier is null)
-            throw new ArgumentException($"Supplier {cmd.SupplierId} not found.", nameof(cmd.SupplierId));
+            throw new UnprocessableEntityException($"Supplier {cmd.SupplierId} not found.");
 
         product.Name = cmd.Name;
         product.Material = cmd.Material;
